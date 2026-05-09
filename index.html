@@ -1,0 +1,828 @@
+<!DOCTYPE html>
+<!--
+  tips — 单便签窗口 v3.1
+  ========================
+  布局：标题栏(30px) + 正文区(flex:1) + 历史版本条(可折叠) + 状态栏(22px)
+  交互：双击标题编辑、×关闭窗口(不删数据)、自动保存1.5s防抖
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>便签</title>
+<style>
+  /* ===== 变量 ===== */
+  :root {
+    --font: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    --font-mono: "SF Mono", "Fira Code", "Cascadia Code", Consolas, monospace;
+    --bg:  #fefefd; --bg2: #eeeeec; --border: #e0dcd5; --border-l: #edeae4;
+    --text: #2c2c28; --text-s: #6b6860; --text-m: #a09c94;
+    --accent: #e6a817; --accent-h: #c98f0f; --accent-s: #fdf3d1;
+    --danger: #d05555; --shadow: 0 1px 3px rgba(0,0,0,0.06);
+    --shadow-m: 0 4px 12px rgba(0,0,0,0.10);
+    --shadow-l: 0 8px 24px rgba(0,0,0,0.14);
+    --radius: 6px;
+  }
+  body.dark {
+    --bg: #2a2b2f; --bg2: #36373c; --border: #3a3b40; --border-l: #333438;
+    --text: #e2e2de; --text-s: #9a9890; --text-m: #6b6860;
+    --accent: #f0b829; --accent-h: #f5c842; --accent-s: #3a3520;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; overflow: hidden; font-family: var(--font); background: var(--bg); color: var(--text); transition: background 0.2s, color 0.2s; }
+  body { display: flex; flex-direction: column; }
+  button { font-family: inherit; cursor: pointer; border: none; background: none; color: inherit; }
+  input { font-family: inherit; border: none; background: none; color: inherit; outline: none; }
+  textarea { font-family: var(--font); border: none; background: none; color: inherit; outline: none; resize: none; }
+
+  /* ===== 标题栏 (32px, draggable) ===== */
+  .titlebar {
+    display: flex; align-items: center; gap: 0;
+    height: 32px; padding: 0 4px; flex-shrink: 0; z-index: 10;
+    -webkit-app-region: drag; user-select: none; cursor: grab;
+    background: linear-gradient(180deg, rgba(0,0,0,0.04) 0%, transparent 100%);
+    border-bottom: 1px solid var(--border-l);
+  }
+  .titlebar:active { cursor: grabbing; }
+  /* 拖拽占位区 — 填补标题两侧空白，提供拖拽空间 */
+  .titlebar__drag {
+    flex: 1; min-width: 12px; height: 100%;
+    -webkit-app-region: drag;
+  }
+  .titlebar__title {
+    max-width: 260px; padding: 0 6px; flex-shrink: 1; min-width: 40px;
+    font-size: 12px; font-weight: 600; line-height: 30px; text-align: center;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    -webkit-app-region: no-drag; cursor: default;
+  }
+  .titlebar__title[contenteditable="true"] {
+    cursor: text; background: rgba(0,0,0,0.04); border-radius: 3px;
+  }
+  .titlebar__title:empty::before { content: '无标题'; color: var(--text-m); }
+  .titlebar__btn {
+    width: 24px; height: 24px; border-radius: 3px; display: flex; align-items: center; justify-content: center;
+    font-size: 13px; color: var(--text-m); -webkit-app-region: no-drag; cursor: pointer;
+    transition: color 0.15s, background 0.15s; flex-shrink: 0;
+  }
+  .titlebar__btn:hover { background: var(--bg2); color: var(--text); }
+  .titlebar__btn--pin { font-size: 10px; }
+  .titlebar__btn--pin-active { color: var(--accent) !important; }
+  .titlebar__btn--close:hover { background: rgba(208,85,85,0.12); color: var(--danger); }
+
+  /* ===== 正文编辑区 ===== */
+  .note-body {
+    flex: 1; min-height: 0; padding: 12px 14px; font-size: 14px; line-height: 1.7;
+    overflow-y: auto; -webkit-app-region: no-drag;
+  }
+  .note-body::placeholder { color: var(--text-m); opacity: 0.4; }
+
+  /* ===== 历史版本条 (可折叠) ===== */
+  .version-strip { border-top: 1px solid var(--border-l); flex-shrink: 0; -webkit-app-region: no-drag; }
+  .version-strip__toggle {
+    display: flex; align-items: center; gap: 4px; padding: 3px 12px;
+    font-size: 10px; color: var(--text-m); cursor: pointer; transition: color 0.15s;
+  }
+  .version-strip__toggle:hover { color: var(--text-s); }
+  .version-strip__body { display: none; max-height: 120px; overflow-y: auto; border-top: 1px solid var(--border-l); }
+  .version-strip--open .version-strip__body { display: block; }
+  .version-strip__item {
+    display: flex; align-items: center; gap: 6px; padding: 4px 12px;
+    font-size: 10px; cursor: pointer; border-bottom: 1px solid var(--border-l);
+    transition: background 0.1s;
+  }
+  .version-strip__item:hover { background: var(--bg2); }
+  .version-strip__item__time { color: var(--text-m); white-space: nowrap; min-width: 44px; }
+  .version-strip__item__preview { flex: 1; color: var(--text-s); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .version-strip__item__restore {
+    font-size: 10px; color: var(--accent); cursor: pointer; padding: 1px 6px;
+    border: 1px solid var(--accent); border-radius: 3px; white-space: nowrap;
+    opacity: 0; transition: opacity 0.1s;
+  }
+  .version-strip__item:hover .version-strip__item__restore { opacity: 1; }
+  .version-strip__empty { padding: 8px 12px; font-size: 10px; color: var(--text-m); text-align: center; }
+
+  /* ===== 状态栏 (22px) ===== */
+  .statusbar {
+    display: flex; align-items: center; justify-content: space-between;
+    height: 22px; padding: 0 10px; flex-shrink: 0;
+    font-size: 10px; color: var(--text-m); border-top: 1px solid var(--border-l);
+    -webkit-app-region: no-drag;
+  }
+  .statusbar__left { display: flex; align-items: center; gap: 8px; }
+  .statusbar__right { display: flex; align-items: center; gap: 6px; }
+  .statusbar__tags { display: flex; gap: 3px; }
+  .statusbar__tag {
+    font-size: 9px; padding: 0 5px; border-radius: 6px; background: rgba(0,0,0,0.04); cursor: pointer;
+  }
+  body.dark .statusbar__tag { background: rgba(255,255,255,0.05); }
+  .statusbar__tag:hover { background: var(--accent-s); color: var(--accent); }
+  .statusbar__color {
+    display: inline-block; width: 10px; height: 10px; border-radius: 2px;
+    border: 1px solid var(--border); flex-shrink: 0;
+  }
+
+  /* ===== 右键菜单 ===== */
+  .ctx-menu {
+    position: fixed; min-width: 170px; padding: 4px 0; border-radius: var(--radius);
+    background: var(--bg); border: 1px solid var(--border); box-shadow: var(--shadow-l);
+    z-index: 999; user-select: none; animation: ctxIn 0.1s ease;
+  }
+  @keyframes ctxIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
+  .ctx-item {
+    display: flex; align-items: center; gap: 8px; padding: 6px 14px; font-size: 12px;
+    cursor: pointer; white-space: nowrap; transition: background 0.1s;
+  }
+  .ctx-item:hover { background: var(--accent-s); }
+  .ctx-item--danger { color: var(--danger); }
+  .ctx-item--danger:hover { background: rgba(208,85,85,0.08); }
+  .ctx-item__icon { width: 16px; text-align: center; flex-shrink: 0; }
+  .ctx-item__label { flex: 1; }
+  .ctx-divider { height: 1px; background: var(--border-l); margin: 3px 0; }
+
+  /* 颜色子菜单 */
+  .ctx-colors { display: flex; flex-wrap: wrap; gap: 3px; padding: 5px 8px; max-width: 150px; }
+  .ctx-color-swatch {
+    width: 18px; height: 18px; border-radius: 3px; border: 2px solid transparent;
+    cursor: pointer; transition: transform 0.1s, border-color 0.1s;
+  }
+  .ctx-color-swatch:hover { transform: scale(1.15); }
+  .ctx-color-swatch--active { border-color: var(--accent); }
+
+  /* 标签编辑面板 */
+  .ctx-tag-panel { padding: 6px 10px; min-width: 170px; }
+  .ctx-tag-chips { display: flex; flex-wrap: wrap; gap: 3px; margin-bottom: 5px; }
+  .ctx-tag-chip {
+    display: inline-flex; align-items: center; gap: 2px; padding: 1px 7px;
+    border-radius: 9px; font-size: 10px; color: #fff; background: var(--accent);
+  }
+  .ctx-tag-chip__remove { font-size: 12px; cursor: pointer; opacity: 0.7; }
+  .ctx-tag-chip__remove:hover { opacity: 1; }
+  .ctx-tag-input {
+    width: 100%; height: 22px; padding: 0 5px; font-size: 11px;
+    border-radius: 3px; background: var(--bg2);
+  }
+  .ctx-tag-input:focus { outline: none; }
+  .ctx-tag-suggest { max-height: 90px; overflow-y: auto; }
+  .ctx-tag-suggest__item {
+    padding: 2px 6px; font-size: 10px; color: var(--text-s); cursor: pointer; border-radius: 2px;
+  }
+  .ctx-tag-suggest__item:hover { background: var(--accent-s); }
+
+  /* ===== 确认弹窗 ===== */
+  .overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.30);
+    display: flex; align-items: center; justify-content: center; z-index: 1000;
+  }
+  .dialog {
+    background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 18px; max-width: 310px; width: 90%; box-shadow: var(--shadow-l);
+  }
+  .dialog__msg { font-size: 12px; line-height: 1.6; margin-bottom: 14px; }
+  .dialog__msg strong { font-weight: 600; }
+  .dialog__actions { display: flex; justify-content: flex-end; gap: 6px; }
+  .dialog__btn { padding: 5px 14px; border-radius: var(--radius); font-size: 12px; font-weight: 500; transition: background 0.15s; }
+  .dialog__btn--cancel { background: var(--bg2); color: var(--text-s); }
+  .dialog__btn--cancel:hover { background: var(--border); }
+  .dialog__btn--danger { background: var(--danger); color: #fff; }
+  .dialog__btn--danger:hover { background: #b84444; }
+
+  /* ===== 滚动条 ===== */
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+<!-- ===== 标题栏 ===== -->
+<div class="titlebar" id="titlebar">
+  <div class="titlebar__drag"></div>
+  <span class="titlebar__title" id="noteTitle" title="双击编辑标题"></span>
+  <div class="titlebar__drag"></div>
+  <button class="titlebar__btn titlebar__btn--pin" id="btnPin" title="置顶">📌</button>
+  <button class="titlebar__btn titlebar__btn--close" id="btnClose" title="关闭窗口">&times;</button>
+</div>
+
+<!-- ===== 正文编辑区 ===== -->
+<textarea class="note-body" id="noteBody" placeholder="开始书写…" spellcheck="false"></textarea>
+
+<!-- ===== 历史版本条 ===== -->
+<div class="version-strip" id="versionStrip">
+  <div class="version-strip__toggle" id="versionToggle">🕒 历史版本 ▼</div>
+  <div class="version-strip__body" id="versionStripBody"></div>
+</div>
+
+<!-- ===== 状态栏 ===== -->
+<div class="statusbar">
+  <div class="statusbar__left">
+    <span id="statusWords">0 字</span>
+    <span class="statusbar__tags" id="statusTags"></span>
+  </div>
+  <div class="statusbar__right">
+    <span id="statusSaved"></span>
+    <span class="statusbar__color" id="statusColor"></span>
+  </div>
+</div>
+
+<!-- ===== 右键菜单 ===== -->
+<div class="ctx-menu hidden" id="ctxMenu"></div>
+
+<!-- ===== 确认弹窗 ===== -->
+<div class="overlay hidden" id="confirmOverlay">
+  <div class="dialog">
+    <div class="dialog__msg" id="confirmMsg"></div>
+    <div class="dialog__actions">
+      <button class="dialog__btn dialog__btn--cancel" id="confirmCancel">取消</button>
+      <button class="dialog__btn dialog__btn--danger" id="confirmOk">确定</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  /* ================================================================
+   *  常量
+   * ================================================================ */
+  var STORAGE_KEY = 'sticky_notes_data';
+  var MAX_VERSIONS = 10;
+  var SAVE_DELAY = 1500;
+  var STICKY_COLORS = ['#fff9c4','#ffd6e0','#d4e6ff','#d4f0d4','#e8d4ff','#ffe0c4','#ffffff','#f0f0f0'];
+  var isElectron = !!(window.electronAPI && window.electronAPI.isElectron);
+
+  /* ================================================================
+   *  状态
+   * ================================================================ */
+  var currentNoteId = null;
+  var currentNote = null;
+  var isDirty = false;
+  var saveTimer = null;
+  var lastRemoteContent = null;
+  var confirmCb = null;
+
+  /* ================================================================
+   *  数据层
+   * ================================================================ */
+  function loadData() {
+    try { var r = localStorage.getItem(STORAGE_KEY); return r ? JSON.parse(r) : null; } catch (e) { return null; }
+  }
+  function saveData(d) {
+    if (!d) return false;
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(d)); localStorage.setItem('sticky_notes_last_update', String(Date.now())); return true; } catch (e) { return false; }
+  }
+  function findNote(d, id) {
+    if (!d || !d.notes) return null;
+    for (var i = 0; i < d.notes.length; i++) { if (d.notes[i].id === id) return d.notes[i]; }
+    return null;
+  }
+
+  /* ================================================================
+   *  工具函数
+   * ================================================================ */
+  function getAutoTitle(c) {
+    if (!c || !c.trim()) return '无标题';
+    var lines = c.split('\n');
+    for (var i = 0; i < lines.length; i++) { var l = lines[i].trim(); if (l) { l = l.replace(/^#{1,6}\s+/, '').trim(); if (l) return l.slice(0, 60); } }
+    return '无标题';
+  }
+  function getTitle(n) { return (n.title && n.title.trim()) ? n.title.trim().slice(0, 60) : getAutoTitle(n.content || ''); }
+  function countWords(t) {
+    if (!t || !t.trim()) return 0;
+    var cn = (t.match(/[一-鿿]/g) || []).length;
+    var en = t.replace(/[一-鿿]/g, ' ').match(/\b\w+\b/g);
+    return cn + (en ? en.length : 0);
+  }
+  function fmtTime(ts) {
+    if (!ts) return '';
+    var d = Date.now() - ts; if (d < 0) d = 0;
+    var m = Math.floor(d / 60000), h = Math.floor(m / 60);
+    if (m < 1) return '刚刚';
+    if (m < 60) return m + '分钟前';
+    if (h < 24) return h + '小时前';
+    return new Date(ts).toLocaleDateString('zh-CN');
+  }
+  function fmtTimeShort(ts) {
+    if (!ts) return '';
+    var d = new Date(ts);
+    var pad = function (n) { return n < 10 ? '0' + n : '' + n; };
+    return pad(d.getHours()) + ':' + pad(d.getMinutes());
+  }
+  function esc(s) { var d = document.createElement('div'); d.appendChild(document.createTextNode(s)); return d.innerHTML; }
+  function normalizeTag(t) { return t.trim().toLowerCase().replace(/\s+/g, '-'); }
+  function collectAllTags() {
+    var d = loadData(); if (!d) return [];
+    var freq = {};
+    for (var i = 0; i < d.notes.length; i++) {
+      var n = d.notes[i]; if (n.isArchived) continue;
+      (n.tags || []).forEach(function (t) { if (t) freq[t] = (freq[t] || 0) + 1; });
+    }
+    var r = []; Object.keys(freq).forEach(function (k) { r.push({ name: k, count: freq[k] }); });
+    r.sort(function (a, b) { return b.count - a.count || (a.name < b.name ? -1 : 1); });
+    return r;
+  }
+  function extractPlain(md, max) {
+    if (!md) return '';
+    var t = md.replace(/!\[[^\]]*\]\([^)]+\)/g, '$1').replace(/\[[^\]]*\]\([^)]+\)/g, '$1');
+    t = t.replace(/`{1,3}[^`]*`{1,3}/g, '').replace(/[*_~#>]+/g, '').replace(/<[^>]+>/g, '');
+    t = t.replace(/\s+/g, ' ').trim();
+    return max && t.length > max ? t.slice(0, max) + '…' : t;
+  }
+
+  /* ================================================================
+   *  初始化
+   * ================================================================ */
+  function getQueryParam(name) { return new URLSearchParams(window.location.search).get(name); }
+
+  function initApp() {
+    var noteId = getQueryParam('noteId');
+    if (noteId) { initNoteView(noteId); return; }
+    document.body.innerHTML = '<div style="padding:30px;text-align:center;color:var(--text-muted);">无效窗口：缺少 noteId 参数</div>';
+  }
+
+  function initNoteView(noteId) {
+    var data = loadData();
+    if (!data) { data = { version: 2, notes: [], settings: {} }; saveData(data); }
+    var note = findNote(data, noteId);
+    if (!note) {
+      if (isElectron) window.electronAPI.closeNoteWindow(noteId);
+      document.body.innerHTML = '<div style="padding:30px;text-align:center;color:var(--text-muted);">便签已删除</div>';
+      return;
+    }
+    currentNoteId = noteId;
+    currentNote = note;
+    lastRemoteContent = note.content || '';
+    applyTheme();
+    setupUI();
+    bindEvents();
+    initCrossTabSync();
+    updateStatusBar();
+    updateVersionStrip();
+    if (note.color) document.body.style.backgroundColor = note.color;
+    if (isElectron && note.isPinned) window.electronAPI.setNotePin(noteId, true);
+  }
+
+  function setupUI() {
+    document.getElementById('noteTitle').textContent = getTitle(currentNote);
+    document.getElementById('noteBody').value = currentNote.content || '';
+    if (currentNote.isPinned) {
+      var pb = document.getElementById('btnPin');
+      pb.classList.add('titlebar__btn--pin-active'); pb.title = '取消置顶';
+    }
+    updateColorDot();
+  }
+
+  function updateColorDot() {
+    var el = document.getElementById('statusColor');
+    if (el && currentNote && currentNote.color) {
+      el.style.backgroundColor = currentNote.color;
+      el.title = '当前颜色';
+    }
+  }
+
+  /* ================================================================
+   *  标题栏 — 双击编辑
+   * ================================================================ */
+  function startTitleEdit() {
+    var span = document.getElementById('noteTitle');
+    if (span.getAttribute('contenteditable') === 'true') return;
+    span.setAttribute('contenteditable', 'true');
+    span.focus();
+    // 全选文字
+    var range = document.createRange();
+    range.selectNodeContents(span);
+    var sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }
+
+  function endTitleEdit() {
+    var span = document.getElementById('noteTitle');
+    span.setAttribute('contenteditable', 'false');
+    var newTitle = span.textContent.trim();
+    var autoTitle = getAutoTitle(document.getElementById('noteBody').value);
+    if (newTitle === autoTitle) newTitle = '';
+
+    var data = loadData();
+    var note = findNote(data, currentNoteId);
+    if (note && note.title !== newTitle) {
+      note.title = newTitle;
+      note.updated = Date.now();
+      saveData(data);
+      currentNote = note;
+    }
+  }
+
+  /* ================================================================
+   *  自动保存
+   * ================================================================ */
+  function debouncedSave() {
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(function () { saveTimer = null; saveCurrentNote(); }, SAVE_DELAY);
+  }
+
+  function saveCurrentNote() {
+    if (!currentNoteId) return;
+    var bodyEl = document.getElementById('noteBody');
+    var titleEl = document.getElementById('noteTitle');
+    if (!bodyEl) return;
+    var data = loadData(); if (!data) return;
+    var note = findNote(data, currentNoteId); if (!note) return;
+
+    var newContent = bodyEl.value;
+    var rawTitle = titleEl.textContent.trim();
+    var autoTitle = getAutoTitle(newContent);
+
+    var newTitle;
+    if (note.title && note.title.trim()) {
+      newTitle = (!rawTitle || rawTitle === autoTitle) ? '' : rawTitle;
+      if (!rawTitle || rawTitle === autoTitle) titleEl.textContent = autoTitle;
+    } else if (rawTitle && rawTitle !== autoTitle) {
+      newTitle = rawTitle;
+    } else {
+      newTitle = ''; titleEl.textContent = autoTitle;
+    }
+
+    if (note.content === newContent && note.title === newTitle) return;
+
+    if (note.content !== newContent) {
+      note.versions.push({ content: note.content, savedAt: note.updated });
+      if (note.versions.length > MAX_VERSIONS) note.versions.shift();
+    }
+    note.content = newContent;
+    note.title = newTitle;
+    note.updated = Date.now();
+
+    if (note.tags && note.tags.length > 0) {
+      var clean = [];
+      for (var i = 0; i < note.tags.length; i++) { var tn = normalizeTag(note.tags[i]); if (tn && clean.indexOf(tn) === -1) clean.push(tn); }
+      note.tags = clean;
+    }
+
+    if (saveData(data)) {
+      isDirty = false; lastRemoteContent = newContent; currentNote = note;
+      updateStatusBar(); updateVersionStrip();
+    }
+  }
+
+  /* ================================================================
+   *  状态栏 & 历史版本条
+   * ================================================================ */
+  function updateStatusBar() {
+    var bodyEl = document.getElementById('noteBody');
+    var content = bodyEl ? bodyEl.value : '';
+    document.getElementById('statusWords').textContent = countWords(content) + ' 字';
+    document.getElementById('statusSaved').textContent = currentNote ? '已保存 · ' + fmtTimeShort(currentNote.updated) : '';
+    updateStatusTags();
+    updateColorDot();
+  }
+
+  function updateStatusTags() {
+    var el = document.getElementById('statusTags'); if (!el || !currentNote) return;
+    el.innerHTML = '';
+    (currentNote.tags || []).forEach(function (t) {
+      var c = document.createElement('span'); c.className = 'statusbar__tag'; c.textContent = t;
+      c.title = '点击管理标签'; c.addEventListener('click', function () { showTagEditor(currentNoteId); });
+      el.appendChild(c);
+    });
+  }
+
+  function updateVersionStrip() {
+    var body = document.getElementById('versionStripBody');
+    if (!body || !currentNote) return;
+    var versions = currentNote.versions || [];
+    body.innerHTML = '';
+
+    // 当前版本
+    var cur = document.createElement('div');
+    cur.className = 'version-strip__item';
+    cur.innerHTML = '<span class="version-strip__item__time">当前</span>' +
+      '<span class="version-strip__item__preview">' + esc(extractPlain(currentNote.content, 40) || '（空）') + '</span>';
+    body.appendChild(cur);
+
+    if (versions.length === 0) {
+      var empty = document.createElement('div');
+      empty.className = 'version-strip__empty'; empty.textContent = '暂无历史版本';
+      body.appendChild(empty);
+      return;
+    }
+
+    // 最近 5 个版本（倒序）
+    var recent = versions.slice(-5).reverse();
+    for (var i = 0; i < recent.length; i++) {
+      (function (ver, label) {
+        var item = document.createElement('div');
+        item.className = 'version-strip__item';
+        item.innerHTML = '<span class="version-strip__item__time">' + fmtTimeShort(ver.savedAt) + '</span>' +
+          '<span class="version-strip__item__preview">' + esc(extractPlain(ver.content, 40) || '（空）') + '</span>' +
+          '<span class="version-strip__item__restore">恢复</span>';
+        item.querySelector('.version-strip__item__restore').addEventListener('click', function (e) {
+          e.stopPropagation();
+          showConfirm('确定恢复到「' + label + '」？当前内容将保存为一个新版本。', function () {
+            restoreVersion(versions.length - 1 - i);
+          });
+        });
+        body.appendChild(item);
+      })(recent[i], '版本 ' + (versions.length - (recent.length - 1 - i)));
+    }
+  }
+
+  function restoreVersion(idx) {
+    var data = loadData(); var note = findNote(data, currentNoteId);
+    if (!note || idx < 0 || idx >= note.versions.length) return;
+    var old = note.versions[idx].content;
+    if (note.content !== old) {
+      note.versions.push({ content: note.content, savedAt: note.updated });
+      if (note.versions.length > MAX_VERSIONS) note.versions.shift();
+    }
+    note.content = old; note.updated = Date.now();
+    saveData(data); currentNote = note;
+    document.getElementById('noteBody').value = old;
+    updateStatusBar(); updateVersionStrip();
+  }
+
+  /* ================================================================
+   *  事件绑定
+   * ================================================================ */
+  function bindEvents() {
+    var bodyEl = document.getElementById('noteBody');
+    var titleEl = document.getElementById('noteTitle');
+    var closeBtn = document.getElementById('btnClose');
+    var pinBtn = document.getElementById('btnPin');
+    var verToggle = document.getElementById('versionToggle');
+    var verStrip = document.getElementById('versionStrip');
+
+    // 自动保存
+    bodyEl.addEventListener('input', function () { isDirty = true; updateStatusBar(); debouncedSave(); });
+
+    // 标题双击 → 编辑
+    titleEl.addEventListener('dblclick', startTitleEdit);
+    // 回车 / 失焦 → 结束编辑
+    titleEl.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); endTitleEdit(); } });
+    titleEl.addEventListener('blur', endTitleEdit);
+
+    // 关闭按钮 → 保存并关闭窗口，不删数据
+    closeBtn.addEventListener('click', function () {
+      if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+      saveCurrentNote();
+      if (isElectron) { window.electronAPI.closeNoteWindow(currentNoteId); }
+      else { window.close(); }
+    });
+
+    // 置顶
+    pinBtn.addEventListener('click', togglePin);
+
+    // 历史版本折叠
+    verToggle.addEventListener('click', function () {
+      var open = verStrip.classList.toggle('version-strip--open');
+      verToggle.innerHTML = open ? '🕒 历史版本 ▲' : '🕒 历史版本 ▼';
+      if (open) updateVersionStrip();
+    });
+
+    // 右键菜单
+    document.addEventListener('contextmenu', function (e) { if (currentNoteId) showContextMenu(e); });
+    document.addEventListener('click', function (e) {
+      var m = document.getElementById('ctxMenu');
+      if (m && !m.classList.contains('hidden') && !m.contains(e.target)) hideContextMenu();
+    });
+
+    // 键盘
+    document.addEventListener('keydown', function (e) {
+      var ctrl = e.ctrlKey || e.metaKey;
+      if (ctrl && e.key === 's') { e.preventDefault(); if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; } saveCurrentNote(); }
+      if (e.key === 'Escape') { hideContextMenu(); hideConfirm(); }
+    });
+
+    // 窗口 resize → 通知主进程
+    var boundsTimer = null;
+    window.addEventListener('resize', function () {
+      if (!isElectron || !currentNoteId) return;
+      if (boundsTimer) clearTimeout(boundsTimer);
+      boundsTimer = setTimeout(function () {
+        window.electronAPI.updateNoteBounds(currentNoteId, { x: window.screenX, y: window.screenY, width: window.outerWidth, height: window.outerHeight });
+      }, 500);
+    });
+
+    // 关闭前保存
+    window.addEventListener('beforeunload', function () {
+      if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+      saveCurrentNote();
+      if (isElectron && currentNoteId) {
+        window.electronAPI.updateNoteBounds(currentNoteId, { x: window.screenX, y: window.screenY, width: window.outerWidth, height: window.outerHeight });
+      }
+    });
+
+    // 确认弹窗
+    document.getElementById('confirmCancel').addEventListener('click', hideConfirm);
+    document.getElementById('confirmOk').addEventListener('click', function () { if (confirmCb) { var cb = confirmCb; hideConfirm(); cb(); } });
+    document.getElementById('confirmOverlay').addEventListener('click', function (e) { if (e.target === this) hideConfirm(); });
+  }
+
+  /* ================================================================
+   *  右键菜单
+   * ================================================================ */
+  function showContextMenu(e) {
+    e.preventDefault(); hideContextMenu();
+    var note = currentNote; if (!note) return;
+    var menu = document.getElementById('ctxMenu');
+    menu.innerHTML =
+      '<div class="ctx-item" id="ctxColor"><span class="ctx-item__icon">🎨</span><span class="ctx-item__label">切换颜色</span>' + buildColorSwatches(note.color || STICKY_COLORS[0]) + '</div>' +
+      '<div class="ctx-item" id="ctxPin"><span class="ctx-item__icon">📌</span><span class="ctx-item__label">' + (note.isPinned ? '取消置顶' : '置顶') + '</span></div>' +
+      '<div class="ctx-item" id="ctxArchive"><span class="ctx-item__icon">📦</span><span class="ctx-item__label">' + (note.isArchived ? '恢复' : '归档') + '</span></div>' +
+      '<div class="ctx-divider"></div>' +
+      '<div class="ctx-item" id="ctxTags"><span class="ctx-item__icon">🏷️</span><span class="ctx-item__label">管理标签</span></div>' +
+      '<div class="ctx-item" id="ctxExportTxt"><span class="ctx-item__icon">📄</span><span class="ctx-item__label">导出 TXT</span></div>';
+
+    var x = e.clientX, y = e.clientY;
+    menu.classList.remove('hidden');
+    var mw = menu.offsetWidth || 180, mh = menu.offsetHeight || 260;
+    if (x + mw > window.innerWidth - 8) x = window.innerWidth - mw - 8;
+    if (y + mh > window.innerHeight - 8) y = window.innerHeight - mh - 8;
+    menu.style.left = x + 'px'; menu.style.top = y + 'px';
+
+    bindCtxEvents(note);
+  }
+
+  function buildColorSwatches(cur) {
+    var h = '<div class="ctx-colors">';
+    for (var i = 0; i < STICKY_COLORS.length; i++) {
+      var c = STICKY_COLORS[i];
+      h += '<div class="ctx-color-swatch' + (c === cur ? ' ctx-color-swatch--active' : '') + '" style="background:' + c + '" data-color="' + c + '"></div>';
+    }
+    return h + '</div>';
+  }
+
+  function bindCtxEvents(note) {
+    var m = document.getElementById('ctxMenu');
+    m.querySelectorAll('.ctx-color-swatch').forEach(function (s) { s.addEventListener('click', function (e) { e.stopPropagation(); changeColor(this.getAttribute('data-color')); hideContextMenu(); }); });
+    var pin = document.getElementById('ctxPin'); if (pin) pin.addEventListener('click', function () { togglePin(); hideContextMenu(); });
+    var arch = document.getElementById('ctxArchive'); if (arch) arch.addEventListener('click', function () { if (note.isArchived) restoreNote(); else archiveNote(); hideContextMenu(); });
+    var tags = document.getElementById('ctxTags'); if (tags) tags.addEventListener('click', function () { showTagEditor(currentNoteId); });
+    var txt = document.getElementById('ctxExportTxt'); if (txt) txt.addEventListener('click', function () { exportNoteAsTxt(); hideContextMenu(); });
+  }
+
+  function hideContextMenu() { var m = document.getElementById('ctxMenu'); m.classList.add('hidden'); m.innerHTML = ''; var tp = document.querySelector('.ctx-tag-panel'); if (tp) tp.remove(); }
+
+  function changeColor(c) {
+    var d = loadData(); var n = findNote(d, currentNoteId);
+    if (n) { n.color = c; n.updated = Date.now(); saveData(d); currentNote = n; document.body.style.backgroundColor = c; updateColorDot(); }
+  }
+
+  function togglePin() {
+    var d = loadData(); var n = findNote(d, currentNoteId);
+    if (n) { n.isPinned = !n.isPinned; n.updated = Date.now(); saveData(d); currentNote = n;
+      var b = document.getElementById('btnPin'); b.classList.toggle('titlebar__btn--pin-active', n.isPinned); b.title = n.isPinned ? '取消置顶' : '置顶';
+      if (isElectron) window.electronAPI.setNotePin(currentNoteId, n.isPinned); }
+  }
+
+  function archiveNote() {
+    var d = loadData(); var n = findNote(d, currentNoteId);
+    if (n) { n.isArchived = true; n.isPinned = false; n.updated = Date.now(); saveData(d); currentNote = n;
+      if (isElectron) window.electronAPI.closeNoteWindow(currentNoteId); }
+  }
+
+  function restoreNote() {
+    var d = loadData(); var n = findNote(d, currentNoteId);
+    if (n) { n.isArchived = false; n.updated = Date.now(); saveData(d); currentNote = n; }
+  }
+
+  /* ================================================================
+   *  标签编辑
+   * ================================================================ */
+  function showTagEditor(noteId) {
+    var ex = document.querySelector('.ctx-tag-panel'); if (ex) ex.remove();
+    var d = loadData(); var n = findNote(d, noteId); if (!n) return;
+    var menu = document.getElementById('ctxMenu');
+    if (!menu || menu.classList.contains('hidden')) { menu.classList.remove('hidden'); menu.style.left = '20px'; menu.style.top = '40px'; }
+    var p = document.createElement('div'); p.className = 'ctx-tag-panel';
+    p.innerHTML = '<div class="ctx-tag-chips" id="ctxTagChips"></div><input class="ctx-tag-input" id="ctxTagInput" placeholder="添加标签…（回车确认）"><div class="ctx-tag-suggest hidden" id="ctxTagSuggest"></div>';
+    menu.appendChild(p);
+    renderCtxChips(n); bindTagEvents(noteId);
+    setTimeout(function () { var inp = document.getElementById('ctxTagInput'); if (inp) inp.focus(); }, 100);
+  }
+
+  function renderCtxChips(note) {
+    var el = document.getElementById('ctxTagChips'); if (!el) return; el.innerHTML = '';
+    (note.tags || []).forEach(function (t) {
+      var c = document.createElement('span'); c.className = 'ctx-tag-chip';
+      c.innerHTML = esc(t) + '<span class="ctx-tag-chip__remove" data-tag="' + esc(t) + '">&times;</span>';
+      el.appendChild(c);
+    });
+    el.querySelectorAll('.ctx-tag-chip__remove').forEach(function (r) { r.addEventListener('click', function (e) { e.stopPropagation(); removeTag(this.getAttribute('data-tag')); }); });
+  }
+
+  function bindTagEvents(noteId) {
+    var inp = document.getElementById('ctxTagInput'); var sug = document.getElementById('ctxTagSuggest'); if (!inp) return;
+    inp.addEventListener('input', function () {
+      var q = inp.value.trim().toLowerCase();
+      if (!q) { sug.classList.add('hidden'); sug.innerHTML = ''; return; }
+      var all = collectAllTags(), matches = [];
+      for (var i = 0; i < all.length; i++) { if (all[i].name.indexOf(q) === 0 && all[i].name !== q) matches.push(all[i]); }
+      if (!matches.length) { sug.classList.add('hidden'); sug.innerHTML = ''; return; }
+      sug.innerHTML = '';
+      for (var j = 0; j < Math.min(matches.length, 5); j++) {
+        var item = document.createElement('div'); item.className = 'ctx-tag-suggest__item'; item.textContent = matches[j].name + ' (' + matches[j].count + ')';
+        (function (tag) { item.addEventListener('mousedown', function (e) { e.preventDefault(); addTag(tag); inp.value = ''; sug.classList.add('hidden'); inp.focus(); }); })(matches[j].name);
+        sug.appendChild(item);
+      }
+      sug.classList.remove('hidden');
+    });
+    inp.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); var v = inp.value.trim(); if (v) { v.split(',').forEach(function (p) { addTag(normalizeTag(p)); }); inp.value = ''; sug.classList.add('hidden'); } }
+      if (e.key === 'Escape') { sug.classList.add('hidden'); inp.value = ''; }
+    });
+    inp.addEventListener('blur', function () { setTimeout(function () { sug.classList.add('hidden'); }, 150); });
+  }
+
+  function addTag(tag) { if (!tag) return; var d = loadData(); var n = findNote(d, currentNoteId); if (!n) return; var t = n.tags || []; if (t.indexOf(tag) === -1) t.push(tag); n.tags = t; n.updated = Date.now(); saveData(d); currentNote = n; updateStatusTags(); renderCtxChips(n); }
+  function removeTag(tag) { var d = loadData(); var n = findNote(d, currentNoteId); if (!n) return; var t = n.tags || []; var idx = t.indexOf(tag); if (idx !== -1) t.splice(idx, 1); n.tags = t; n.updated = Date.now(); saveData(d); currentNote = n; updateStatusTags(); renderCtxChips(n); }
+
+  /* ================================================================
+   *  导出 TXT
+   * ================================================================ */
+  function exportNoteAsTxt() {
+    if (!currentNote) return;
+    var title = getTitle(currentNote), content = currentNote.content || '', tags = (currentNote.tags || []).join(', ');
+    var date = new Date().toISOString().slice(0, 10);
+    var text = '﻿' + title + '\n========================\n日期：' + date + '\n';
+    if (tags) text += '标签：' + tags + '\n';
+    text += '========================\n\n' + content;
+    var b = new Blob([text], { type: 'text/plain;charset=utf-8' });
+    var a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = title + '-' + date + '.txt'; a.click(); URL.revokeObjectURL(a.href);
+  }
+
+  /* ================================================================
+   *  确认弹窗
+   * ================================================================ */
+  function showConfirm(msg, cb) { confirmCb = cb; document.getElementById('confirmMsg').innerHTML = msg; document.getElementById('confirmOverlay').classList.remove('hidden'); }
+  function hideConfirm() { document.getElementById('confirmOverlay').classList.add('hidden'); confirmCb = null; }
+
+  /* ================================================================
+   *  Markdown 渲染（版本预览用）
+   * ================================================================ */
+  function _esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+  function procInline(t) {
+    t = t.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, function (m, alt, url) { return '<img src="' + _esc(url) + '" alt="' + alt + '">'; });
+    t = t.replace(/\[([^\]]*)\]\(([^)]+)\)/g, function (m, txt, url) { return '<a href="' + _esc(url) + '">' + txt + '</a>'; });
+    t = t.replace(/`([^`]+)`/g, '<code>$1</code>');
+    t = t.replace(/\*\*\*([^*]+)\*\*\*/g, '<strong><em>$1</em></strong>');
+    t = t.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    t = t.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+    t = t.replace(/~~([^~]+)~~/g, '<del>$1</del>');
+    return t;
+  }
+  function procBlock(t) {
+    var lines = t.split('\n'), first = lines[0];
+    var m = first.match(/^(#{1,6})\s+(.*)/); if (m) return '<h' + m[1].length + '>' + procInline(m[2]) + '</h' + m[1].length + '>';
+    if (/^[-*_]{3,}\s*$/.test(t.trim())) return '<hr>';
+    if (/^>\s?/.test(first)) { var q = []; for (var i = 0; i < lines.length; i++) q.push(lines[i].replace(/^>\s?/, '')); return '<blockquote>' + procBlocks(q.join('\n')) + '</blockquote>'; }
+    if (/^[-*]\s/.test(first)) { var h = '<ul>'; for (var j = 0; j < lines.length; j++) { var lm = lines[j].match(/^[-*]\s+(.*)/); if (lm) h += '<li>' + procInline(lm[1]) + '</li>'; } return h + '</ul>'; }
+    if (/^\d+\.\s/.test(first)) { var o = '<ol>'; for (var k = 0; k < lines.length; k++) { var om = lines[k].match(/^\d+\.\s+(.*)/); if (om) o += '<li>' + procInline(om[1]) + '</li>'; } return o + '</ol>'; }
+    return '<p>' + procInline(lines.join('\n')) + '</p>';
+  }
+  function procBlocks(t) { if (!t.trim()) return ''; var blocks = t.split(/\n\n+/), h = ''; for (var i = 0; i < blocks.length; i++) { var b = blocks[i].trim(); if (b) h += procBlock(b); } return h; }
+  function renderMarkdown(md) {
+    if (!md) return ''; var codeBlocks = [];
+    var t = md.replace(/```(\w*)\n?([\s\S]*?)```/g, function (m, lang, code) { var idx = codeBlocks.length; codeBlocks.push('<pre><code>' + _esc(code.replace(/\n$/, '')) + '</code></pre>'); return '\n\n%%CB' + idx + '%%\n\n'; });
+    t = t.replace(/%%CB(\d+)%%/g, function (m, idx) { return '\x00CB' + idx + '\x00'; });
+    t = _esc(t); t = t.replace(/\x00CB(\d+)\x00/g, function (m, idx) { return '%%CB' + idx + '%%'; });
+    var h = procBlocks(t); h = h.replace(/%%CB(\d+)%%/g, function (m, idx) { return codeBlocks[parseInt(idx)] || ''; });
+    return h;
+  }
+
+  /* ================================================================
+   *  主题
+   * ================================================================ */
+  var mq = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
+  function getThemeMode() {
+    try { var r = localStorage.getItem(STORAGE_KEY); if (r) { var d = JSON.parse(r); if (d && d.settings) { if (d.settings.themeAuto) return 'auto'; if (d.settings.darkMode) return 'dark'; return 'light'; } } } catch (e) {}
+    return 'auto';
+  }
+  function applyTheme() { var m = getThemeMode(); document.body.classList.toggle('dark', m === 'dark' || (m === 'auto' && mq && mq.matches)); }
+
+  /* ================================================================
+   *  跨窗口同步
+   * ================================================================ */
+  function initCrossTabSync() {
+    window.addEventListener('storage', function (e) {
+      if (e.key === STORAGE_KEY || e.key === 'sticky_notes_last_update') {
+        var d = loadData(); if (!d) return;
+        var n = findNote(d, currentNoteId);
+        if (!n) { if (isElectron) window.electronAPI.closeNoteWindow(currentNoteId); return; }
+        var bodyEl = document.getElementById('noteBody');
+        if (bodyEl && document.activeElement !== bodyEl) { bodyEl.value = n.content || ''; currentNote = n; lastRemoteContent = n.content || ''; updateStatusBar(); updateVersionStrip(); }
+      }
+    });
+  }
+
+  /* ================================================================
+   *  启动
+   * ================================================================ */
+  applyTheme();
+  if (document.readyState === 'loading') { document.addEventListener('DOMContentLoaded', initApp); } else { initApp(); }
+})();
+</script>
+</body>
+</html>

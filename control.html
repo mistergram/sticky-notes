@@ -1,0 +1,973 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>便签管理</title>
+<style>
+  /* ===== 基础变量 ===== */
+  :root {
+    --font: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    --bg:       #fafaf8;
+    --bg-card:  #ffffff;
+    --bg-hover: #f2f1ed;
+    --bg-input: #eeeeec;
+    --border:   #e0dcd5;
+    --border-l: #edeae4;
+    --text:     #2c2c28;
+    --text-s:   #6b6860;
+    --text-m:   #a09c94;
+    --accent:   #e6a817;
+    --accent-h: #c98f0f;
+    --accent-s: #fdf3d1;
+    --danger:   #d05555;
+    --shadow:   0 1px 3px rgba(0,0,0,0.06);
+    --shadow-m: 0 4px 12px rgba(0,0,0,0.10);
+    --radius: 6px;
+  }
+
+  body.dark {
+    --bg:       #1a1b1e;
+    --bg-card:  #252629;
+    --bg-hover: #2f3035;
+    --bg-input: #333438;
+    --border:   #3a3b40;
+    --border-l: #333438;
+    --text:     #e2e2de;
+    --text-s:   #9a9890;
+    --text-m:   #6b6860;
+    --accent:   #f0b829;
+    --accent-h: #f5c842;
+    --accent-s: #3a3520;
+    --shadow:   0 1px 3px rgba(0,0,0,0.20);
+    --shadow-m: 0 4px 12px rgba(0,0,0,0.30);
+  }
+
+  /* ===== 重置 ===== */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; overflow: hidden; font-family: var(--font); font-size: 13px; background: var(--bg); color: var(--text); transition: background 0.2s, color 0.2s; }
+  body { display: flex; flex-direction: column; }
+  button { font-family: inherit; cursor: pointer; border: none; background: none; color: inherit; }
+  input  { font-family: inherit; border: none; background: none; color: inherit; outline: none; }
+
+  /* ===== 标题栏 ===== */
+  .header {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 14px; flex-shrink: 0;
+    background: var(--bg-card); border-bottom: 1px solid var(--border-l);
+    -webkit-app-region: drag; user-select: none;
+  }
+  .header__title { flex: 1; font-size: 15px; font-weight: 700; }
+  .header__btn {
+    padding: 6px 14px; border-radius: var(--radius); font-size: 12px; font-weight: 600;
+    -webkit-app-region: no-drag; transition: background 0.15s, color 0.15s;
+  }
+  .header__btn--primary { background: var(--accent); color: #fff; }
+  .header__btn--primary:hover { background: var(--accent-h); }
+  .header__btn--icon {
+    width: 30px; height: 30px; padding: 0; display: flex; align-items: center; justify-content: center;
+    border-radius: var(--radius); font-size: 15px; color: var(--text-s); -webkit-app-region: no-drag;
+  }
+  .header__btn--icon:hover { background: var(--bg-input); color: var(--text); }
+
+  /* ===== 标签页切换 ===== */
+  .tabs {
+    display: flex; border-bottom: 1px solid var(--border-l);
+    flex-shrink: 0; background: var(--bg-card);
+  }
+  .tabs__tab {
+    flex: 1; padding: 9px 4px; text-align: center; font-size: 12px; font-weight: 600;
+    color: var(--text-m); cursor: pointer; border-bottom: 2px solid transparent;
+    transition: color 0.15s, border-color 0.15s;
+  }
+  .tabs__tab:hover { color: var(--text-s); }
+  .tabs__tab--active { color: var(--accent); border-bottom-color: var(--accent); }
+
+  /* ===== 搜索栏 ===== */
+  .search-bar { padding: 8px 12px; flex-shrink: 0; background: var(--bg-card); }
+  .search-bar__input {
+    width: 100%; height: 32px; padding: 0 10px; border-radius: var(--radius);
+    background: var(--bg-input); font-size: 12px;
+  }
+  .search-bar__input:focus { box-shadow: 0 0 0 2px var(--accent); }
+  .search-bar__input::placeholder { color: var(--text-m); }
+
+  /* ===== 列表 ===== */
+  .list { flex: 1; overflow-y: auto; }
+  .list-item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 10px 14px; cursor: pointer;
+    border-bottom: 1px solid var(--border-l);
+    transition: background 0.1s;
+  }
+  .list-item:hover { background: var(--bg-hover); }
+  .list-item__color {
+    width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0;
+    border: 1px solid var(--border);
+  }
+  .list-item__body { flex: 1; min-width: 0; }
+  .list-item__title {
+    font-size: 13px; font-weight: 600; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis; margin-bottom: 2px;
+  }
+  .list-item__preview {
+    font-size: 11px; color: var(--text-s); white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis; margin-bottom: 3px;
+  }
+  .list-item__meta-row {
+    display: flex; align-items: center; gap: 6px; font-size: 10px; color: var(--text-m);
+  }
+  .list-item__tags { display: flex; gap: 3px; flex-wrap: wrap; }
+  .list-item__tag {
+    font-size: 9px; padding: 1px 5px; border-radius: 6px;
+    background: var(--bg-input); color: var(--text-m);
+  }
+  .list-item__badge { font-size: 12px; flex-shrink: 0; }
+  .list-empty {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    padding: 48px 20px; color: var(--text-m); font-size: 13px; text-align: center;
+  }
+  .list-empty__icon { font-size: 40px; opacity: 0.25; margin-bottom: 10px; }
+  .list-empty__hint { font-size: 11px; opacity: 0.6; margin-top: 4px; }
+
+  /* ===== 底部栏 ===== */
+  .footer {
+    display: flex; align-items: center; gap: 6px;
+    padding: 7px 14px; border-top: 1px solid var(--border-l);
+    flex-shrink: 0; font-size: 11px; color: var(--text-m);
+    background: var(--bg-card);
+  }
+  .footer__count { flex: 1; }
+  .footer__btn {
+    padding: 4px 10px; border-radius: var(--radius); font-size: 11px;
+    color: var(--text-s); border: 1px solid var(--border);
+    transition: background 0.15s, color 0.15s; white-space: nowrap;
+  }
+  .footer__btn:hover { background: var(--bg-input); color: var(--text); }
+
+  /* ===== 右键菜单 ===== */
+  .ctx-menu {
+    position: fixed; min-width: 140px; padding: 4px 0;
+    border-radius: var(--radius); background: var(--bg-card);
+    border: 1px solid var(--border); box-shadow: var(--shadow-m);
+    z-index: 1000; user-select: none;
+  }
+  .ctx-menu__item {
+    padding: 7px 16px; font-size: 12px; cursor: pointer; white-space: nowrap;
+    transition: background 0.1s;
+  }
+  .ctx-menu__item:hover { background: var(--accent-s); }
+  .ctx-menu__item--danger { color: var(--danger); }
+  .ctx-menu__item--danger:hover { background: rgba(208,85,85,0.08); }
+
+  /* ===== 确认弹窗 ===== */
+  .overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.30);
+    display: flex; align-items: center; justify-content: center; z-index: 1001;
+  }
+  .dialog {
+    background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 20px; max-width: 330px; width: 90%;
+    box-shadow: var(--shadow-m);
+  }
+  .dialog__msg { font-size: 13px; line-height: 1.6; margin-bottom: 16px; }
+  .dialog__msg strong { font-weight: 600; }
+  .dialog__actions { display: flex; justify-content: flex-end; gap: 8px; }
+  .dialog__btn {
+    padding: 6px 14px; border-radius: var(--radius); font-size: 12px; font-weight: 500;
+    transition: background 0.15s;
+  }
+  .dialog__btn--cancel { background: var(--bg-input); color: var(--text-s); }
+  .dialog__btn--cancel:hover { background: var(--border); }
+  .dialog__btn--danger { background: var(--danger); color: #fff; }
+  .dialog__btn--danger:hover { background: #b84444; }
+
+  /* ===== 滚动条 ===== */
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+<!-- ===== 标题栏 ===== -->
+<div class="header">
+  <span class="header__title">便签管理</span>
+  <button class="header__btn header__btn--primary" id="btnNew" title="新建便签 (Ctrl+N)">＋ 新建便签</button>
+  <button class="header__btn--icon" id="btnTheme" title="切换主题">🌙</button>
+</div>
+
+<!-- ===== 标签页 ===== -->
+<div class="tabs">
+  <div class="tabs__tab tabs__tab--active" id="tabActive">活跃便签</div>
+  <div class="tabs__tab" id="tabArchive">归档便签</div>
+</div>
+
+<!-- ===== 搜索 ===== -->
+<div class="search-bar">
+  <input class="search-bar__input" id="searchInput" placeholder="搜索标题或内容… (Ctrl+F)">
+</div>
+
+<!-- ===== 列表 ===== -->
+<div class="list" id="noteList">
+  <div class="list-empty">
+    <div class="list-empty__icon">✨</div>
+    <div>加载中…</div>
+  </div>
+</div>
+
+<!-- ===== 底部 ===== -->
+<div class="footer">
+  <span class="footer__count" id="footerCount">0 条便签</span>
+  <span class="footer__version" id="footerVersion" title="检查更新" style="cursor:pointer;">v2.0.0</span>
+  <button class="footer__btn" id="btnCheckUpdate" title="检查更新">🔄 更新</button>
+  <button class="footer__btn" id="btnExportTxt" title="导出全部 TXT">📄 导出TXT</button>
+  <button class="footer__btn" id="btnImport" title="导入 JSON">📥 导入</button>
+  <button class="footer__btn" id="btnExport" title="导出 JSON">📤 导出</button>
+</div>
+
+<!-- ===== 右键菜单 ===== -->
+<div class="ctx-menu hidden" id="ctxMenu"></div>
+
+<!-- ===== 确认弹窗 ===== -->
+<div class="overlay hidden" id="confirmOverlay">
+  <div class="dialog">
+    <div class="dialog__msg" id="confirmMsg"></div>
+    <div class="dialog__actions">
+      <button class="dialog__btn dialog__btn--cancel" id="confirmCancel">取消</button>
+      <button class="dialog__btn dialog__btn--danger" id="confirmOk">确定删除</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  /* ================================================================
+   *  常量
+   * ================================================================ */
+  var STORAGE_KEY = 'sticky_notes_data';
+  var isElectron = !!(window.electronAPI && window.electronAPI.isElectron);
+
+  /* ================================================================
+   *  状态
+   * ================================================================ */
+  var showArchived = false;
+  var searchQuery = '';
+  var searchTimer = null;
+  var storageTimer = null;
+  var ctxNoteId = null;
+  var confirmCb = null;
+
+  /* ================================================================
+   *  数据层
+   * ================================================================ */
+  function loadData() {
+    try {
+      var raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return null;
+      return JSON.parse(raw);
+    } catch (e) { return null; }
+  }
+
+  function saveData(data) {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+      // 写入时间戳触发其他窗口的 storage 事件
+      try { localStorage.setItem('sticky_notes_last_update', String(Date.now())); } catch (_) {}
+    } catch (e) { /* 存储满时静默失败 */ }
+  }
+
+  /* ================================================================
+   *  工具函数
+   * ================================================================ */
+  function getAutoTitle(content) {
+    if (!content || !content.trim()) return '无标题';
+    var lines = content.split('\n');
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i].trim();
+      if (line) {
+        line = line.replace(/^#{1,6}\s+/, '').trim();
+        if (line) return line.slice(0, 50);
+      }
+    }
+    return '无标题';
+  }
+
+  function getTitle(note) {
+    if (note.title && note.title.trim()) return note.title.trim().slice(0, 50);
+    return getAutoTitle(note.content || '');
+  }
+
+  function extractPlain(md, max) {
+    if (!md) return '';
+    var t = md;
+    t = t.replace(/!\[([^\]]*)\]\([^)]+\)/g, '$1');
+    t = t.replace(/\[([^\]]*)\]\([^)]+\)/g, '$1');
+    t = t.replace(/`{1,3}[^`]*`{1,3}/g, '');
+    t = t.replace(/\*{1,3}([^*]+)\*{1,3}/g, '$1');
+    t = t.replace(/_{1,3}([^_]+)_{1,3}/g, '$1');
+    t = t.replace(/~~([^~]+)~~/g, '$1');
+    t = t.replace(/[#>\-*]/g, '');
+    t = t.replace(/<[^>]+>/g, '');
+    t = t.replace(/\s+/g, ' ').trim();
+    if (max && t.length > max) return t.slice(0, max) + '…';
+    return t;
+  }
+
+  function formatTime(ts) {
+    if (!ts) return '';
+    var diff = Date.now() - ts;
+    if (diff <= 0) diff = 0;
+    var sec = Math.floor(diff / 1000);
+    var min = Math.floor(sec / 60);
+    var hour = Math.floor(min / 60);
+    var day = Math.floor(hour / 24);
+    if (min < 1)  return '刚刚';
+    if (min < 60) return min + ' 分钟前';
+    if (hour < 24) return hour + ' 小时前';
+    if (day === 1) return '昨天';
+    if (day < 7)  return day + ' 天前';
+    return new Date(ts).toLocaleDateString('zh-CN');
+  }
+
+  function escapeHTML(str) {
+    var div = document.createElement('div');
+    div.appendChild(document.createTextNode(str));
+    return div.innerHTML;
+  }
+
+  /* ================================================================
+   *  过滤与排序
+   * ================================================================ */
+  function getFilteredNotes() {
+    var data = loadData();
+    if (!data || !Array.isArray(data.notes)) return [];
+
+    var notes = data.notes.filter(function (n) {
+      return showArchived ? n.isArchived : !n.isArchived;
+    });
+
+    if (searchQuery) {
+      var q = searchQuery.toLowerCase();
+      notes = notes.filter(function (n) {
+        var inTitle = (getTitle(n) || '').toLowerCase().indexOf(q) !== -1;
+        var inContent = (n.content || '').toLowerCase().indexOf(q) !== -1;
+        var inTags = (n.tags || []).some(function (t) {
+          return t.toLowerCase().indexOf(q) !== -1;
+        });
+        return inTitle || inContent || inTags;
+      });
+    }
+
+    notes.sort(function (a, b) {
+      if (!showArchived && a.isPinned !== b.isPinned) return a.isPinned ? -1 : 1;
+      return b.updated - a.updated;
+    });
+
+    return notes;
+  }
+
+  /* ================================================================
+   *  渲染
+   * ================================================================ */
+  function renderList() {
+    var list = document.getElementById('noteList');
+    var footer = document.getElementById('footerCount');
+    var notes = getFilteredNotes();
+
+    var total = 0;
+    var data = loadData();
+    if (data && data.notes) {
+      total = data.notes.filter(function (n) {
+        return showArchived ? n.isArchived : !n.isArchived;
+      }).length;
+    }
+    footer.textContent = showArchived
+      ? '归档 ' + total + ' 条'
+      : total + ' 条活跃便签';
+
+    if (notes.length === 0) {
+      list.innerHTML = buildEmptyState();
+      return;
+    }
+
+    list.innerHTML = '';
+    for (var i = 0; i < notes.length; i++) {
+      list.appendChild(buildItem(notes[i]));
+    }
+  }
+
+  function buildEmptyState() {
+    var icon, text, hint;
+    if (showArchived) {
+      icon = '📦'; text = '归档为空'; hint = '便签可以在这里暂时休息';
+    } else if (searchQuery) {
+      icon = '🔍'; text = '没有找到匹配的便签'; hint = '试试其他关键词';
+    } else {
+      icon = '✨'; text = '暂无便签'; hint = '点击「＋ 新建便签」开始记录';
+    }
+    return '<div class="list-empty">' +
+      '<div class="list-empty__icon">' + icon + '</div>' +
+      '<div>' + text + '</div>' +
+      '<div class="list-empty__hint">' + hint + '</div>' +
+      '</div>';
+  }
+
+  function buildItem(note) {
+    var div = document.createElement('div');
+    div.className = 'list-item';
+    div.setAttribute('data-note-id', note.id);
+
+    // 颜色指示
+    var colorDot = document.createElement('span');
+    colorDot.className = 'list-item__color';
+    colorDot.style.backgroundColor = note.color || '#fff9c4';
+    div.appendChild(colorDot);
+
+    // 信息区
+    var body = document.createElement('div');
+    body.className = 'list-item__body';
+
+    var title = document.createElement('div');
+    title.className = 'list-item__title';
+    title.textContent = getTitle(note);
+    body.appendChild(title);
+
+    if (note.content) {
+      var preview = document.createElement('div');
+      preview.className = 'list-item__preview';
+      preview.textContent = extractPlain(note.content, 50);
+      body.appendChild(preview);
+    }
+
+    var metaRow = document.createElement('div');
+    metaRow.className = 'list-item__meta-row';
+    metaRow.textContent = formatTime(note.updated);
+
+    if (note.tags && note.tags.length > 0) {
+      var tagsWrap = document.createElement('span');
+      tagsWrap.className = 'list-item__tags';
+      tagsWrap.style.display = 'inline-flex';
+      for (var t = 0; t < Math.min(note.tags.length, 3); t++) {
+        var tag = document.createElement('span');
+        tag.className = 'list-item__tag';
+        tag.textContent = note.tags[t];
+        tagsWrap.appendChild(tag);
+      }
+      if (note.tags.length > 3) {
+        var moreTag = document.createElement('span');
+        moreTag.className = 'list-item__tag';
+        moreTag.textContent = '+' + (note.tags.length - 3);
+        tagsWrap.appendChild(moreTag);
+      }
+      metaRow.appendChild(tagsWrap);
+    }
+    body.appendChild(metaRow);
+
+    div.appendChild(body);
+
+    // 徽章
+    if (note.isPinned) {
+      var pinBadge = document.createElement('span');
+      pinBadge.className = 'list-item__badge';
+      pinBadge.textContent = '📌';
+      pinBadge.title = '已置顶';
+      div.appendChild(pinBadge);
+    }
+    if (note.isArchived) {
+      var archBadge = document.createElement('span');
+      archBadge.className = 'list-item__badge';
+      archBadge.textContent = '📦';
+      archBadge.title = '已归档';
+      div.appendChild(archBadge);
+    }
+
+    // 事件
+    div.addEventListener('click', function () { openNoteWindow(note.id); });
+    div.addEventListener('contextmenu', function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      showContextMenu(e, note);
+    });
+
+    return div;
+  }
+
+  /* ================================================================
+   *  操作
+   * ================================================================ */
+  function createNewNote() {
+    var note = {
+      id: Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
+      title: '', content: '', tags: [],
+      isPinned: false, isArchived: false,
+      x: 0, y: 0, width: 320, height: 360,
+      color: '#fff9c4',
+      created: Date.now(), updated: Date.now(), versions: []
+    };
+
+    var data = loadData() || { version: 2, notes: [], settings: {} };
+    if (!data.notes) data.notes = [];
+    data.notes.unshift(note);
+    saveData(data);
+
+    if (isElectron) {
+      window.electronAPI.createNoteWindow({ noteId: note.id });
+    } else {
+      console.warn('[便签管理] electronAPI 不可用，便签数据已保存但无法打开独立窗口');
+    }
+
+    renderList();
+  }
+
+  function openNoteWindow(noteId) {
+    if (isElectron) {
+      window.electronAPI.createNoteWindow({ noteId: noteId });
+    } else {
+      console.log('[便签管理] 非 Electron 环境，无法打开独立窗口。便签ID:', noteId);
+    }
+  }
+
+  function archiveNote(noteId) {
+    var data = loadData();
+    if (!data) return;
+    for (var i = 0; i < data.notes.length; i++) {
+      if (data.notes[i].id === noteId) {
+        data.notes[i].isArchived = true;
+        data.notes[i].isPinned = false;
+        data.notes[i].updated = Date.now();
+        break;
+      }
+    }
+    saveData(data);
+    renderList();
+  }
+
+  function restoreNote(noteId) {
+    var data = loadData();
+    if (!data) return;
+    for (var i = 0; i < data.notes.length; i++) {
+      if (data.notes[i].id === noteId) {
+        data.notes[i].isArchived = false;
+        data.notes[i].updated = Date.now();
+        break;
+      }
+    }
+    saveData(data);
+    renderList();
+  }
+
+  function deleteNote(noteId) {
+    var data = loadData();
+    if (!data) return;
+    for (var i = 0; i < data.notes.length; i++) {
+      if (data.notes[i].id === noteId) {
+        data.notes.splice(i, 1);
+        break;
+      }
+    }
+    saveData(data);
+    // 通知主进程关闭对应的便签窗口
+    if (isElectron) {
+      window.electronAPI.closeNoteWindow(noteId);
+    }
+    renderList();
+  }
+
+  function confirmDeleteNote(note) {
+    showConfirm(
+      '确定要删除便签「<strong>' + escapeHTML(getTitle(note)) + '</strong>」吗？<br>此操作不可恢复。',
+      function () { deleteNote(note.id); }
+    );
+  }
+
+  /* ================================================================
+   *  导出 TXT（单张）
+   * ================================================================ */
+  function exportNoteAsTxt(note) {
+    var title = getTitle(note);
+    var tags = (note.tags || []).join(', ');
+    var date = new Date().toISOString().slice(0, 10);
+    var filename = (title !== '无标题' ? title : '无标题') + '-' + date + '.txt';
+
+    var text = '﻿'; // BOM，确保 Windows 记事本正确显示中文
+    text += title + '\n';
+    text += '========================\n';
+    text += '日期：' + date + '\n';
+    if (tags) text += '标签：' + tags + '\n';
+    text += '最后修改：' + formatTime(note.updated) + '\n';
+    text += '========================\n\n';
+    text += note.content || '';
+
+    downloadFile(filename, 'text/plain;charset=utf-8', text);
+  }
+
+  /* ================================================================
+   *  导出全部 TXT
+   * ================================================================ */
+  function exportAllTxt() {
+    var data = loadData();
+    if (!data || !data.notes) return;
+
+    var notes = data.notes.filter(function (n) { return !n.isArchived; });
+    if (notes.length === 0) return;
+
+    var date = new Date().toISOString().slice(0, 10);
+    var text = '﻿全部便签导出 — ' + date + '\n';
+    text += '================================================================\n\n';
+
+    for (var i = 0; i < notes.length; i++) {
+      var n = notes[i];
+      text += '【' + getTitle(n) + '】\n';
+      text += '----------------------------------------------------------------\n';
+      var tags = (n.tags || []).join(', ');
+      if (tags) text += '标签：' + tags + '  |  ';
+      text += '最后修改：' + formatTime(n.updated) + '\n';
+      text += '----------------------------------------------------------------\n\n';
+      text += (n.content || '（空便签）') + '\n\n';
+      if (i < notes.length - 1) {
+        text += '\n================================================================\n\n';
+      }
+    }
+
+    downloadFile('全部便签-' + date + '.txt', 'text/plain;charset=utf-8', text);
+  }
+
+  function downloadFile(filename, mimeType, content) {
+    var blob = new Blob([content], { type: mimeType });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+  }
+
+  /* ================================================================
+   *  导入 / 导出 JSON
+   * ================================================================ */
+  function exportJSON() {
+    var data = loadData();
+    if (!data) return;
+    var json = JSON.stringify(data, null, 2);
+    var date = new Date().toISOString().slice(0, 10);
+    downloadFile('便签备份-' + date + '.json', 'application/json', json);
+  }
+
+  function importJSON() {
+    var input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json';
+    input.addEventListener('change', function () {
+      var file = input.files && input.files[0];
+      if (!file) return;
+      var reader = new FileReader();
+      reader.onload = function (e) {
+        try {
+          var imported = JSON.parse(e.target.result);
+          if (!imported || !Array.isArray(imported.notes)) {
+            alert('无效的便签备份文件');
+            return;
+          }
+          if (!confirm('导入将替换当前所有便签数据，确定继续？')) return;
+          saveData(imported);
+          renderList();
+        } catch (err) {
+          alert('文件解析失败，请确认选择的是 JSON 格式的便签备份文件');
+        }
+      };
+      reader.readAsText(file);
+    });
+    input.click();
+  }
+
+  /* ================================================================
+   *  右键菜单
+   * ================================================================ */
+  function showContextMenu(e, note) {
+    hideContextMenu();
+    ctxNoteId = note.id;
+
+    var menu = document.getElementById('ctxMenu');
+    menu.innerHTML =
+      '<div class="ctx-menu__item" id="ctxOpen">📋 打开便签</div>' +
+      '<div class="ctx-menu__item" id="ctxExport">📄 导出 TXT</div>' +
+      '<div class="ctx-menu__item" id="ctxArchive">' +
+        (note.isArchived ? '📤 恢复' : '📦 归档') +
+      '</div>' +
+      '<div class="ctx-menu__item ctx-menu__item--danger" id="ctxDelete">🗑️ 删除</div>';
+
+    menu.classList.remove('hidden');
+
+    // 定位，防止溢出
+    var x = e.clientX;
+    var y = e.clientY;
+    // 先显示才能测量
+    var mw = menu.offsetWidth;
+    var mh = menu.offsetHeight;
+    if (x + mw > window.innerWidth - 8)  x = window.innerWidth - mw - 8;
+    if (y + mh > window.innerHeight - 8) y = window.innerHeight - mh - 8;
+    menu.style.left = x + 'px';
+    menu.style.top  = y + 'px';
+
+    // 绑定事件
+    document.getElementById('ctxOpen').addEventListener('click', function () {
+      openNoteWindow(note.id);
+      hideContextMenu();
+    });
+    document.getElementById('ctxExport').addEventListener('click', function () {
+      exportNoteAsTxt(note);
+      hideContextMenu();
+    });
+    document.getElementById('ctxArchive').addEventListener('click', function () {
+      if (note.isArchived) { restoreNote(note.id); }
+      else                { archiveNote(note.id); }
+      hideContextMenu();
+    });
+    document.getElementById('ctxDelete').addEventListener('click', function () {
+      confirmDeleteNote(note);
+      hideContextMenu();
+    });
+  }
+
+  function hideContextMenu() {
+    var menu = document.getElementById('ctxMenu');
+    menu.classList.add('hidden');
+    menu.innerHTML = '';
+    ctxNoteId = null;
+  }
+
+  /* ================================================================
+   *  确认弹窗
+   * ================================================================ */
+  function showConfirm(msg, cb) {
+    confirmCb = cb;
+    document.getElementById('confirmMsg').innerHTML = msg;
+    document.getElementById('confirmOverlay').classList.remove('hidden');
+    document.getElementById('confirmCancel').focus();
+  }
+
+  function hideConfirm() {
+    document.getElementById('confirmOverlay').classList.add('hidden');
+    confirmCb = null;
+  }
+
+  /* ================================================================
+   *  主题
+   * ================================================================ */
+  var systemMQ = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
+
+  function getThemeMode() {
+    try {
+      var raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) {
+        var data = JSON.parse(raw);
+        if (data && data.settings) {
+          if (data.settings.themeAuto) return 'auto';
+          if (data.settings.darkMode) return 'dark';
+          return 'light';
+        }
+      }
+    } catch (e) {}
+    return 'auto';
+  }
+
+  function applyTheme() {
+    var mode = getThemeMode();
+    var isDark = mode === 'dark' || (mode === 'auto' && systemMQ && systemMQ.matches);
+    document.body.classList.toggle('dark', isDark);
+    updateThemeButton();
+  }
+
+  function updateThemeButton() {
+    var btn = document.getElementById('btnTheme');
+    if (!btn) return;
+    var mode = getThemeMode();
+    if (mode === 'dark')      { btn.textContent = '☀️'; btn.title = '当前：暗色模式 — 点击切换'; }
+    else if (mode === 'auto') { btn.textContent = '⛏';  btn.title = '当前：自动模式 — 点击切换'; }
+    else                      { btn.textContent = '🌙'; btn.title = '当前：亮色模式 — 点击切换'; }
+  }
+
+  function toggleTheme() {
+    var data = loadData() || { version: 2, notes: [], settings: {} };
+    if (!data.settings) data.settings = {};
+
+    var mode = getThemeMode();
+    if (mode === 'light')      { data.settings.themeAuto = false; data.settings.darkMode = true; }
+    else if (mode === 'dark')  { data.settings.themeAuto = true;  data.settings.darkMode = false; }
+    else                       { data.settings.themeAuto = false; data.settings.darkMode = false; }
+
+    saveData(data);
+    applyTheme();
+  }
+
+  // 监听系统主题变化（仅在自动模式下生效）
+  if (systemMQ) {
+    systemMQ.addEventListener('change', function () {
+      if (getThemeMode() === 'auto') applyTheme();
+    });
+  }
+
+  /* ================================================================
+   *  事件绑定
+   * ================================================================ */
+  function bindEvents() {
+    // 新建
+    document.getElementById('btnNew').addEventListener('click', createNewNote);
+    // 主题
+    document.getElementById('btnTheme').addEventListener('click', toggleTheme);
+
+    // 标签页
+    document.getElementById('tabActive').addEventListener('click', function () {
+      if (!showArchived) return;
+      showArchived = false;
+      document.getElementById('tabActive').classList.add('tabs__tab--active');
+      document.getElementById('tabArchive').classList.remove('tabs__tab--active');
+      document.getElementById('searchInput').value = '';
+      searchQuery = '';
+      renderList();
+    });
+
+    document.getElementById('tabArchive').addEventListener('click', function () {
+      if (showArchived) return;
+      showArchived = true;
+      document.getElementById('tabArchive').classList.add('tabs__tab--active');
+      document.getElementById('tabActive').classList.remove('tabs__tab--active');
+      document.getElementById('searchInput').value = '';
+      searchQuery = '';
+      renderList();
+    });
+
+    // 搜索（250ms 防抖）
+    document.getElementById('searchInput').addEventListener('input', function () {
+      if (searchTimer) clearTimeout(searchTimer);
+      searchTimer = setTimeout(function () {
+        searchQuery = document.getElementById('searchInput').value.trim().toLowerCase();
+        renderList();
+      }, 250);
+    });
+
+    // 底部按钮
+    document.getElementById('btnExportTxt').addEventListener('click', exportAllTxt);
+    document.getElementById('btnImport').addEventListener('click', importJSON);
+    document.getElementById('btnExport').addEventListener('click', exportJSON);
+
+    // 检查更新
+    document.getElementById('btnCheckUpdate').addEventListener('click', function () {
+      if (isElectron) { window.electronAPI.checkForUpdate(); }
+      else { alert('仅 Electron 环境下可用'); }
+    });
+    document.getElementById('footerVersion').addEventListener('click', function () {
+      if (isElectron) { window.electronAPI.checkForUpdate(); }
+    });
+    loadAppVersion();
+    listenUpdateStatus();
+
+    // 确认弹窗
+    document.getElementById('confirmCancel').addEventListener('click', hideConfirm);
+    document.getElementById('confirmOk').addEventListener('click', function () {
+      if (confirmCb) { var cb = confirmCb; hideConfirm(); cb(); }
+    });
+    document.getElementById('confirmOverlay').addEventListener('click', function (e) {
+      if (e.target === this) hideConfirm();
+    });
+
+    // 全局点击 → 关闭右键菜单
+    document.addEventListener('click', function (e) {
+      var menu = document.getElementById('ctxMenu');
+      if (menu && !menu.classList.contains('hidden') && !menu.contains(e.target)) {
+        hideContextMenu();
+      }
+    });
+
+    // 键盘
+    document.addEventListener('keydown', function (e) {
+      var ctrl = e.ctrlKey || e.metaKey;
+
+      // Ctrl+N → 新建便签
+      if (ctrl && e.key === 'n') { e.preventDefault(); createNewNote(); return; }
+      // Ctrl+F → 聚焦搜索框
+      if (ctrl && e.key === 'f') {
+        e.preventDefault();
+        var si = document.getElementById('searchInput');
+        si.focus();
+        si.select();
+        return;
+      }
+
+      // Escape → 关闭弹窗 / 菜单
+      if (e.key === 'Escape') {
+        var overlay = document.getElementById('confirmOverlay');
+        var menu = document.getElementById('ctxMenu');
+        if (overlay && !overlay.classList.contains('hidden')) { hideConfirm(); return; }
+        if (menu && !menu.classList.contains('hidden')) { hideContextMenu(); return; }
+      }
+    });
+
+    // 跨窗口同步：监听其他窗口的 localStorage 变更
+    window.addEventListener('storage', function (e) {
+      if (e.key === STORAGE_KEY || e.key === 'sticky_notes_last_update') {
+        if (storageTimer) clearTimeout(storageTimer);
+        storageTimer = setTimeout(function () { renderList(); }, 300);
+      }
+    });
+  }
+
+  /* ================================================================
+   *  版本显示 & 自动更新
+   * ================================================================ */
+
+  function loadAppVersion() {
+    var verEl = document.getElementById('footerVersion');
+    if (!verEl) return;
+    if (isElectron) {
+      window.electronAPI.getAppVersion().then(function (v) {
+        verEl.textContent = 'v' + v;
+        verEl.title = '当前版本 v' + v + ' — 点击检查更新';
+      });
+    } else {
+      verEl.textContent = 'v2.0.0 (浏览器)';
+    }
+  }
+
+  /** 监听主进程发来的更新状态 */
+  function listenUpdateStatus() {
+    if (!isElectron) return;
+    // electronAPI 没有直接提供 on 方法，改用轮询或其他方式
+    // 实际在 preload 中，我们需要添加 onUpdateStatus 监听
+    // 这里用 window.electronAPI.onUpdateStatus（如果 preload 暴露了的话）
+    // 作为简化方案：更新通知由主进程对话框直接显示，控制面板仅提供手动检查按钮
+  }
+
+  /* ================================================================
+   *  启动
+   * ================================================================ */
+  function init() {
+    applyTheme();
+    bindEvents();
+
+    // 初始化列表
+    renderList();
+
+    // 如果没有 electronAPI，在控制台提示
+    if (!isElectron) {
+      console.log('[便签管理] 在非 Electron 环境下运行，便签数据仅操作 localStorage，无法打开独立窗口');
+      console.log('[便签管理] 当前便签总数:', (loadData() || {}).notes ? (loadData().notes.length) : 0);
+    }
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+
+})();
+</script>
+</body>
+</html>
