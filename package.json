@@ -32,7 +32,7 @@
     ],
     "publish": {
       "provider": "github",
-      "owner": "your-github-username",
+      "owner": "mistergram",
       "repo": "sticky-notes"
     },
     "win": {
